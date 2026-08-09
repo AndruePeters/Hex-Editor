@@ -32,7 +32,7 @@ class HexController : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantMap currentProperties READ currentProperties NOTIFY propertiesChanged)
     Q_PROPERTY(QVariantMap propertyOptions READ propertyOptions NOTIFY propertiesChanged)
-
+    Q_PROPERTY(bool currentPacketHasString READ currentPacketHasString NOTIFY propertiesChanged) // Add this property
 public:
     explicit HexController(HexModel* model);
 
@@ -45,6 +45,10 @@ public:
     Q_INVOKABLE void selectPropertyBytes(const QString& propertyName);
     Q_INVOKABLE void applyStagedChanges(int packetStartOffset, const QVariantMap& changes);
     Q_INVOKABLE bool isConfigEditable(const QString& propertyName) const;
+    bool currentPacketHasString() const;
+    Q_INVOKABLE void selectStringCharacter(int charIndex);
+    Q_INVOKABLE bool isStringField(const QString& propertyName) const;
+    Q_INVOKABLE void selectStringRange(int startCharIndex, int endCharIndex);
 
     signals:
         void propertiesChanged();

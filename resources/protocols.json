@@ -1,6 +1,17 @@
 {
   "packets": [
     {
+      "matchType": 0,
+      "name": "String Packet",
+      "fields": [
+        {
+          "name": "Decoded ASCII",
+          "byteOffset": 6,
+          "dataType": "string"
+        }
+      ]
+    },
+    {
       "matchType": 1,
       "name": "Sensor Array",
       "fields": [

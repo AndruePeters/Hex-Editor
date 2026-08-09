@@ -4,71 +4,84 @@ import QtQuick.Layouts
 import AppBackend 1.0
 
 ColumnLayout {
-    signal changesApplied()
-    spacing: 5
-    visible: HexControllerInst.currentProperties["Decoded ASCII"] !== undefined
+    id: root
+    spacing: 8
+    Layout.fillWidth: true
+    Layout.fillHeight: true
+    visible: HexControllerInst.currentPacketHasString
 
-    Rectangle { Layout.fillWidth: true; height: 1; color: "#aaaaaa" }
+    property string currentText: {
+        let props = HexControllerInst.currentProperties;
+        for (let key in props) {
+            if (HexControllerInst.isStringField(key)) {
+                return props[key];
+            }
+        }
+        return "";
+    }
+
+    property string stringFieldName: {
+        let props = HexControllerInst.currentProperties;
+        for (let key in props) {
+            if (HexControllerInst.isStringField(key)) {
+                return key;
+            }
+        }
+        return "Decoded ASCII";
+    }
+
+    property bool isUpdating: false
+
+    onCurrentTextChanged: {
+        if (!isUpdating && textArea.text !== currentText) {
+            isUpdating = true;
+            textArea.text = currentText;
+            isUpdating = false;
+        }
+    }
 
     Text {
-        text: "String Payload Editor"
+        text: "String Payload Editor (" + root.stringFieldName + ")"
         font.bold: true
         color: palette.text
-        Layout.margins: 10
-        Layout.bottomMargin: 0
     }
 
     ScrollView {
         Layout.fillWidth: true
         Layout.fillHeight: true
-        Layout.margins: 10
-        clip: true
+        Layout.minimumHeight: 150
 
         TextArea {
-            id: payloadArea
-            text: HexControllerInst.currentProperties["Decoded ASCII"] || ""
-            wrapMode: Text.WrapAnywhere
-            selectByMouse: true
+            id: textArea
             font.family: "Monospace"
+            wrapMode: TextArea.Wrap
+            color: palette.text
+            selectByMouse: true
 
-            function updateHighlight() {
-                let pktStart = HexControllerInst.currentProperties["PacketStartOffset"];
-                if (pktStart !== undefined) {
-                    let start = selectionStart;
-                    let end = selectionEnd;
-
-                    if (start === end) {
-                        start = Math.max(0, Math.min(cursorPosition, text.length - 1));
-                        if (text.length === 0) start = 0;
-                        end = start + 1;
-                    }
-
-                    HexModelInst.setEditSelection(pktStart + 6 + start, end - start);
+            onCursorPositionChanged: {
+                if (!root.isUpdating && activeFocus && selectionStart === selectionEnd) {
+                    HexControllerInst.selectStringRange(cursorPosition, cursorPosition + 1);
                 }
             }
 
-            onCursorPositionChanged: updateHighlight()
-            onSelectedTextChanged: updateHighlight()
+            onSelectionStartChanged: handleSelection()
+            onSelectionEndChanged: handleSelection()
 
-            onActiveFocusChanged: {
-                if (!activeFocus) {
-                    HexModelInst.setEditSelection(-1, 0);
-                } else {
-                    updateHighlight();
+            function handleSelection() {
+                if (!root.isUpdating && activeFocus && selectionStart !== selectionEnd) {
+                    HexControllerInst.selectStringRange(selectionStart, selectionEnd);
                 }
             }
         }
     }
 
     Button {
-        text: "Apply Changes"
         Layout.alignment: Qt.AlignRight
-        Layout.margins: 10
-        Layout.topMargin: 0
+        text: "Apply Changes"
         onClicked: {
-            HexControllerInst.updateStringPayload(HexControllerInst.currentProperties["PacketStartOffset"], payloadArea.text);
-            HexModelInst.setEditSelection(-1, 0);
-            changesApplied();
+            let changes = {};
+            changes[root.stringFieldName] = textArea.text;
+            HexControllerInst.applyStagedChanges(HexControllerInst.currentProperties["PacketStartOffset"], changes);
         }
     }
 }

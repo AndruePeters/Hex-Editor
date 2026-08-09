@@ -131,18 +131,13 @@ void HexController::parseCurrentBuffer() {
                     uint8_t maskedVal = rawByte & field.bitMask;
                     pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
                 }
+                else if (field.dataType == "string") {
+                    int stringLen = payloadLength - (field.byteOffset - 6);
+                    if (stringLen > 0 && field.byteOffset <= payloadLength) {
+                        pkt.properties[field.name] = QString::fromLatin1(data + offset + field.byteOffset, stringLen).replace('\0', "");
+                    }
+                }
             }
-            // for (const PacketField& field : config.fields) {
-            //     if (field.byteOffset < totalPacketLength) {
-            //         uint8_t rawByte = data[offset + field.byteOffset];
-            //         uint8_t maskedVal = rawByte & field.bitMask;
-            //         pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
-            //     }
-            // }
-        }
-        else if (type == 0x00000000) {
-            pkt.typeName = "String Packet";
-            pkt.properties["Decoded ASCII"] = QString::fromLatin1(data + offset + 6, payloadLength).replace('\0', "");
         }
         else {
             pkt.typeName = QString("Unknown (Type 0x%1)").arg(type, 8, 16, QChar('0'));
@@ -241,6 +236,7 @@ void HexController::selectOffset(int offset) {
     emit propertiesChanged();
 }
 
+
 void HexController::selectPropertyBytes(const QString& propertyName) {
     if (!m_properties.contains("PacketStartOffset")) return;
     int startOffset = m_properties["PacketStartOffset"].toInt();
@@ -261,7 +257,9 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
             if (field.name == propertyName) {
                 int fieldSize = 1;
                 QString dt = field.dataType.toLower();
-                if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32" || dt == "epoch32") {
+                if (dt == "string") {
+                    fieldSize = length - (field.byteOffset - 6);
+                } else if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32" || dt == "epoch32") {
                     fieldSize = 4;
                 } else if (dt.contains("64") || dt == "epoch64") {
                     fieldSize = 8;
@@ -285,6 +283,21 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
         m_hexModel->setHighlightRange(it->startOffset, it->totalLength);
     }
 }
+bool HexController::isConfigEditable(const QString &propertyName) const {
+    if (!m_properties.contains("PacketStartOffset")) return false;
+    int startOffset = m_properties["PacketStartOffset"].toInt();
+
+    const QByteArray& buffer = m_hexModel->buffer();
+    if (startOffset + 4 > buffer.size()) return false;
+
+    uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + startOffset);
+    if (m_packetConfigs.contains(type)) {
+        for (const PacketField& field : m_packetConfigs[type].fields) {
+            if (field.name == propertyName) return true;
+        }
+    }
+    return false;
+}
 
 void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap& changes) {
     if (packetStartOffset < 32 || changes.isEmpty()) return;
@@ -295,10 +308,13 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
 
     if (it == m_packets.end()) return;
 
+    int oldTotalLength = it->totalLength;
     const QByteArray& buffer = m_hexModel->buffer();
     if (packetStartOffset + 4 > buffer.size()) return;
 
     uint32_t packetType = qFromBigEndian<uint32_t>(buffer.constData() + packetStartOffset);
+    bool sizeChanged = false;
+    QByteArray newPacketData;
 
     if (m_packetConfigs.contains(packetType)) {
         const PacketConfig& config = m_packetConfigs[packetType];
@@ -311,7 +327,18 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
                 if (field.name == fieldName) {
                     int absoluteOffset = packetStartOffset + field.byteOffset;
 
-                    if (field.dataType == "float32") {
+                    if (field.dataType == "string") {
+                        QByteArray newPayload = newValue.toLatin1();
+                        if (newPayload.size() <= 65535) {
+                            newPacketData.resize(10 + newPayload.size());
+                            char* pData = newPacketData.data();
+                            qToBigEndian<uint32_t>(packetType, pData);
+                            qToBigEndian<uint16_t>(newPayload.size(), pData + 4);
+                            memcpy(pData + 6, newPayload.constData(), newPayload.size());
+                            sizeChanged = true;
+                        }
+                    }
+                    else if (field.dataType == "float32") {
                         bool ok = false;
                         float fVal = newValue.toFloat(&ok);
                         if (ok && absoluteOffset + 4 <= buffer.size()) {
@@ -327,20 +354,6 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
                             QByteArray replacement(4, 0);
                             qToBigEndian<uint32_t>(uVal, replacement.data());
                             m_hexModel->replaceBytes(absoluteOffset, 4, replacement);
-                        }
-                    }
-                    else if (field.dataType == "enum") {
-                        if (field.strToVal.contains(newValue)) {
-                            uint8_t newBits = field.strToVal[newValue];
-                            if (absoluteOffset < buffer.size()) {
-                                uint8_t currentByte = buffer.at(absoluteOffset);
-                                currentByte &= ~field.bitMask;
-                                currentByte |= (newBits & field.bitMask);
-
-                                QByteArray replacement;
-                                replacement.append(currentByte);
-                                m_hexModel->replaceBytes(absoluteOffset, 1, replacement);
-                            }
                         }
                     }
                     else if (field.dataType == "epoch32") {
@@ -377,37 +390,39 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
                             m_hexModel->replaceBytes(absoluteOffset, 8, replacement);
                         }
                     }
+                    else if (field.dataType == "enum") {
+                        if (field.strToVal.contains(newValue)) {
+                            uint8_t newBits = field.strToVal[newValue];
+                            if (absoluteOffset < buffer.size()) {
+                                uint8_t currentByte = buffer.at(absoluteOffset);
+                                currentByte &= ~field.bitMask;
+                                currentByte |= (newBits & field.bitMask);
+
+                                QByteArray replacement;
+                                replacement.append(currentByte);
+                                m_hexModel->replaceBytes(absoluteOffset, 1, replacement);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    else if (packetType == 0x00000000 && changes.contains("Decoded ASCII")) {
-        QString newText = changes["Decoded ASCII"].toString();
-        QByteArray newPayload = newText.toLatin1();
-        if (newPayload.size() <= 65535) {
-            QByteArray newPacketData;
-            newPacketData.resize(10 + newPayload.size());
-            char* data = newPacketData.data();
-            qToBigEndian<uint32_t>(packetType, data);
-            qToBigEndian<uint16_t>(newPayload.size(), data + 4);
-            memcpy(data + 6, newPayload.constData(), newPayload.size());
 
-            uint32_t crc = calculateCrc32(newPacketData.constData(), newPacketData.size() - 4);
-            qToBigEndian<uint32_t>(crc, newPacketData.data() + newPacketData.size() - 4);
-            m_hexModel->replaceBytes(packetStartOffset, it->totalLength, newPacketData);
+    if (sizeChanged) {
+        uint32_t crc = calculateCrc32(newPacketData.constData(), newPacketData.size() - 4);
+        qToBigEndian<uint32_t>(crc, newPacketData.data() + newPacketData.size() - 4);
+        m_hexModel->replaceBytes(packetStartOffset, oldTotalLength, newPacketData);
+    } else {
+        uint16_t pktLen = qFromBigEndian<uint16_t>(m_hexModel->buffer().constData() + packetStartOffset + 4);
+        if (packetStartOffset + 6 + pktLen + 4 <= m_hexModel->buffer().size()) {
+            uint32_t crc = calculateCrc32(m_hexModel->buffer().constData() + packetStartOffset, 6 + pktLen);
+            QByteArray crcBytes(4, 0);
+            qToBigEndian<uint32_t>(crc, crcBytes.data());
+            m_hexModel->replaceBytes(packetStartOffset + 6 + pktLen, 4, crcBytes);
         }
     }
 
-    // Recalculate packet-level CRC
-    uint16_t pktLen = qFromBigEndian<uint16_t>(m_hexModel->buffer().constData() + packetStartOffset + 4);
-    if (packetStartOffset + 6 + pktLen + 4 <= m_hexModel->buffer().size()) {
-        uint32_t crc = calculateCrc32(m_hexModel->buffer().constData() + packetStartOffset, 6 + pktLen);
-        QByteArray crcBytes(4, 0);
-        qToBigEndian<uint32_t>(crc, crcBytes.data());
-        m_hexModel->replaceBytes(packetStartOffset + 6 + pktLen, 4, crcBytes);
-    }
-
-    // Recalculate global file CRC at the very end of the buffer
     const QByteArray& updatedBuffer = m_hexModel->buffer();
     if (updatedBuffer.size() >= 4) {
         uint32_t fileCrc = calculateCrc32(updatedBuffer.constData(), updatedBuffer.size() - 4);
@@ -420,18 +435,85 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
     selectOffset(packetStartOffset);
 }
 
-bool HexController::isConfigEditable(const QString &propertyName) const {
+bool HexController::isStringField(const QString& propertyName) const {
     if (!m_properties.contains("PacketStartOffset")) return false;
     int startOffset = m_properties["PacketStartOffset"].toInt();
-
     const QByteArray& buffer = m_hexModel->buffer();
     if (startOffset + 4 > buffer.size()) return false;
 
     uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + startOffset);
     if (m_packetConfigs.contains(type)) {
         for (const PacketField& field : m_packetConfigs[type].fields) {
-            if (field.name == propertyName) return true;
+            if (field.name == propertyName && field.dataType == "string") return true;
         }
     }
     return false;
+}
+
+bool HexController::currentPacketHasString() const {
+    if (!m_properties.contains("PacketStartOffset")) return false;
+    int startOffset = m_properties["PacketStartOffset"].toInt();
+    const QByteArray& buffer = m_hexModel->buffer();
+    if (startOffset + 4 > buffer.size()) return false;
+
+    uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + startOffset);
+    if (m_packetConfigs.contains(type)) {
+        for (const PacketField& field : m_packetConfigs[type].fields) {
+            if (field.dataType == "string") return true;
+        }
+    }
+    return false;
+}
+
+void HexController::selectStringCharacter(int charIndex) {
+    if (!m_properties.contains("PacketStartOffset")) return;
+    int startOffset = m_properties["PacketStartOffset"].toInt();
+    const QByteArray& buffer = m_hexModel->buffer();
+    if (startOffset + 4 > buffer.size()) return;
+
+    uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + startOffset);
+    if (m_packetConfigs.contains(type)) {
+        for (const PacketField& field : m_packetConfigs[type].fields) {
+            if (field.dataType == "string") {
+                QString currentVal = m_properties.value(field.name).toString();
+                if (charIndex >= currentVal.length() && currentVal.length() > 0) {
+                    charIndex = currentVal.length() - 1;
+                }
+                int targetOffset = startOffset + field.byteOffset + charIndex;
+                if (targetOffset < buffer.size()) {
+                    m_hexModel->setHighlightRange(targetOffset, 1);
+                }
+                return;
+            }
+        }
+    }
+}
+
+void HexController::selectStringRange(int startCharIndex, int endCharIndex) {
+    if (!m_properties.contains("PacketStartOffset")) return;
+    int startOffset = m_properties["PacketStartOffset"].toInt();
+    const QByteArray& buffer = m_hexModel->buffer();
+    if (startOffset + 4 > buffer.size()) return;
+
+    uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + startOffset);
+    if (m_packetConfigs.contains(type)) {
+        for (const PacketField& field : m_packetConfigs[type].fields) {
+            if (field.dataType == "string") {
+                QString currentVal = m_properties.value(field.name).toString();
+
+                if (startCharIndex < 0) startCharIndex = 0;
+                if (endCharIndex > currentVal.length()) endCharIndex = currentVal.length();
+                if (startCharIndex > endCharIndex) std::swap(startCharIndex, endCharIndex);
+
+                int length = endCharIndex - startCharIndex;
+                if (length <= 0) length = 1;
+
+                int targetOffset = startOffset + field.byteOffset + startCharIndex;
+                if (targetOffset < buffer.size()) {
+                    m_hexModel->setHighlightRange(targetOffset, qMin(length, buffer.size() - targetOffset));
+                }
+                return;
+            }
+        }
+    }
 }

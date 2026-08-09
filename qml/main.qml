@@ -75,20 +75,14 @@ ApplicationWindow {
 
             PropertiesList {
                 SplitView.fillHeight: true
-                SplitView.preferredHeight: 300
+                SplitView.preferredHeight: 400
             }
 
             StringPayloadEditor {
                 SplitView.fillHeight: true
                 SplitView.preferredHeight: 300
-                onChangesApplied: minimap.refresh()
+                visible: HexControllerInst.currentPacketHasString
             }
-
-            // SensorArrayEditor {
-            //     SplitView.fillHeight: true
-            //     SplitView.preferredHeight: 200
-            //     onChangesApplied: minimap.refresh()
-            // }
         }
     }
 }

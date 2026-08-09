@@ -27,7 +27,7 @@ ColumnLayout {
         let skipKeys = topKeys.concat(["HasError", "ErrorMessage", "PacketStartOffset"]);
 
         keys.forEach(k => {
-            if (!skipKeys.includes(k)) ordered.push(k);
+            if (!skipKeys.includes(k) && !HexControllerInst.isStringField(k)) ordered.push(k);
         });
 
         return ordered;
@@ -128,6 +128,7 @@ ColumnLayout {
         Layout.margins: 10
         text: "Apply Changes"
         enabled: Object.keys(stagedChanges).length > 0
+        visible: !HexControllerInst.currentPacketHasString
 
         onClicked: {
             HexControllerInst.applyStagedChanges(HexControllerInst.currentProperties["PacketStartOffset"], stagedChanges);
