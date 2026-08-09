@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Qml Quick Widgets Core Gui QuickControls2)
+find_package(ZLIB REQUIRED)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
@@ -16,8 +17,21 @@ qt_add_executable(Hex-Editor src/main.cpp src/HexModel.cpp src/HexController.cpp
 
 qt_add_qml_module(Hex-Editor
     URI bite
-    QML_FILES qml/main.qml
+    QML_FILES
+        qml/HexTableView.qml
+        qml/MinimapView.qml
+        qml/PropertiesList.qml
+        qml/SensorArrayEditor.qml
+        qml/StringPayloadEditor.qml
+        qml/main.qml
 )
-target_link_libraries(Hex-Editor PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+
+qt_add_resources(
+        Hex-Editor "app_resources"
+        PREFIX "/"
+        FILES "resources/protocols.json"
+)
+
+target_link_libraries(Hex-Editor PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 ZLIB::ZLIB)
 
 
