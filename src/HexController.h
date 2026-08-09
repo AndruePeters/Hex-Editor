@@ -1,41 +1,59 @@
 #pragma once
-#include "HexModel.h"
-
 #include <QObject>
 #include <QVariantMap>
+#include <QVector>
+#include <QString>
+#include <QMap>
 
-#include <vector>
-
+class HexModel;
 
 struct ParsedPacket {
     int startOffset;
     int totalLength;
     QString typeName;
     QVariantMap properties;
-    bool hasError;
+};
+
+struct EnumField {
+    QString name;
+    int byteOffset;
+    uint8_t bitMask;
+    QMap<uint8_t, QString> valToStr;
+    QMap<QString, uint8_t> strToVal;
+};
+
+struct PacketConfig {
+    QString name;
+    QList<EnumField> fields;
 };
 
 class HexController : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantMap currentProperties READ currentProperties NOTIFY propertiesChanged)
+    Q_PROPERTY(QVariantMap propertyOptions READ propertyOptions NOTIFY propertiesChanged)
 
 public:
-    explicit HexController(HexModel* hexModel, QObject* parent = nullptr);
+    explicit HexController(HexModel* model);
 
-    QVariantMap currentProperties() const;
-    
-    Q_INVOKABLE void updateStringPayload(int packetStartOffset, const QString& newText); 
-    Q_INVOKABLE void selectOffset(int offset);
+    QVariantMap currentProperties() const { return m_properties; }
+    QVariantMap propertyOptions() const { return m_options; }
+
+    Q_INVOKABLE void loadConfiguration(const QString& configPath);
     Q_INVOKABLE void parseCurrentBuffer();
-    Q_INVOKABLE void updateSensorPayload(int packetStartOffset, float x, float y, float z);
+    Q_INVOKABLE void selectOffset(int offset);
+    Q_INVOKABLE void selectPropertyBytes(const QString& propertyName);
+    Q_INVOKABLE void applyStagedChanges(int packetStartOffset, const QVariantMap& changes);
 
-signals:
-    void propertiesChanged();
+    signals:
+        void propertiesChanged();
 
 private:
-    uint32_t calculateCrc32(const char* data, size_t length);
+    uint32_t calculateCrc32(const char* data, int length);
+
+    HexModel* m_hexModel;
+    QVector<ParsedPacket> m_packets;
+    QMap<uint32_t, PacketConfig> m_packetConfigs;
 
     QVariantMap m_properties;
-    HexModel* m_hexModel;
-    std::vector<ParsedPacket> m_packets;
+    QVariantMap m_options;
 };

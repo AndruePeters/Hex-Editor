@@ -1,65 +1,64 @@
 #pragma once
-#include <QAbstractTableModel>
+#include <QAbstractListModel>
 #include <QByteArray>
-#include <QUrl>
-#include <vector>
+#include <QVector>
+#include <QString>
 
-struct PacketError {
-    int startOffset;
-    int length;
-    QString message;
-};
-
-struct PacketBounds {
-    int startOffset;
-    int length;
-};
-
-class HexModel : public QAbstractTableModel {
+class HexModel : public QAbstractListModel {
     Q_OBJECT
+    Q_PROPERTY(int size READ size NOTIFY bufferChanged)
+    Q_PROPERTY(int selectionOffset READ selectionOffset NOTIFY selectionChanged)
+    Q_PROPERTY(int selectionLength READ selectionLength NOTIFY selectionChanged)
+    Q_PROPERTY(int highlightOffset READ highlightOffset NOTIFY highlightChanged)
+    Q_PROPERTY(int highlightLength READ highlightLength NOTIFY highlightChanged)
 
 public:
-    enum Roles {
-        DisplayRole = Qt::DisplayRole,
-        IsErrorRole = Qt::UserRole + 1,
-        IsSelectedRole = Qt::UserRole + 2,
-        PacketIdRole = Qt::UserRole + 3,
-        EdgeTopRole = Qt::UserRole + 4,
-        EdgeBottomRole = Qt::UserRole + 5,
-        EdgeLeftRole = Qt::UserRole + 6,
-        EdgeRightRole = Qt::UserRole + 7,
-        IsEditCursorRole = Qt::UserRole + 8
+    enum HexRoles {
+        HexRole = Qt::UserRole + 1,
+        AsciiRole,
+        IsErrorRole
     };
 
-    explicit HexModel(QObject *parent = nullptr);
+    explicit HexModel(QObject* parent = nullptr);
 
-    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    Q_INVOKABLE bool loadFile(const QString &filePath);
-    Q_INVOKABLE bool saveFile(const QString &filePath);
-    
-    void setErrorRanges(const std::vector<PacketError> &errors);
-    void setPacketBounds(const std::vector<PacketBounds> &bounds);
-    Q_INVOKABLE void setSelectionRange(int startOffset, int length);
-    Q_INVOKABLE void setEditSelection(int startOffset, int length);
-    
-    void replaceBytes(int offset, int removeLength, const QByteArray& insertBytes);
-    QByteArray& getBufferRef();
-    
-    bool isErrorByte(int offset) const;
+    int size() const { return m_buffer.size(); }
     const QByteArray& buffer() const { return m_buffer; }
+    // QByteArray& getBufferRef() { return m_buffer; }
+
+    int selectionOffset() const { return m_selectionOffset; }
+    int selectionLength() const { return m_selectionLength; }
+    void setSelectionRange(int offset, int length);
+
+    int highlightOffset() const { return m_highlightOffset; }
+    int highlightLength() const { return m_highlightLength; }
+    void setHighlightRange(int offset, int length);
+
+    void replaceBytes(int offset, int length, const QByteArray& newBytes);
+
+    bool isErrorByte(int index) const;
+    void clearErrorBytes();
+    void addErrorRange(int offset, int length);
+
+    Q_INVOKABLE void loadFile(const QString& filePath);
+    Q_INVOKABLE void saveFile(const QString& filePath);
+    Q_INVOKABLE QString getHexByte(int index) const;
+    Q_INVOKABLE QString getAsciiChar(int index) const;
+    Q_INVOKABLE void setEditSelection(int offset, int length);
+
+signals:
+    void selectionChanged();
+    void highlightChanged();
+    void bufferChanged();
 
 private:
-    int getPacketId(int offset) const;
-
     QByteArray m_buffer;
-    std::vector<PacketError> m_errors;
-    std::vector<PacketBounds> m_packetBounds;
-    int m_selectedStart = -1;
-    int m_selectedLength = 0;
-    int m_editStart = -1;
-    int m_editLength = 0;
+    QVector<bool> m_errorMap;
+    int m_selectionOffset = -1;
+    int m_selectionLength = 0;
+    int m_highlightOffset = -1;
+    int m_highlightLength = 0;
 };

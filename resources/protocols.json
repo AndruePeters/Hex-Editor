@@ -1,0 +1,31 @@
+{
+  "packets": [
+    {
+      "matchType": 3,
+      "name": "Device Configuration",
+      "fields": [
+        {
+          "name": "Power State",
+          "byteOffset": 6,
+          "bitMask": 255,
+          "enums": {
+            "0": "Off",
+            "1": "On",
+            "2": "Standby",
+            "3": "Error"
+          }
+        },
+        {
+          "name": "Antenna Mode",
+          "byteOffset": 7,
+          "bitMask": 15,
+          "enums": {
+            "0": "Internal",
+            "1": "External_TX",
+            "2": "External_RX"
+          }
+        }
+      ]
+    }
+  ]
+}
