@@ -289,7 +289,7 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
         return;
     }
 
-    auto it = std::find_if(m_packets.begin(), m_packets.end(), [&](const ParsedPacket& p) {
+    auto it = std::ranges::find_if(m_packets, [&](const ParsedPacket& p) {
         return p.startOffset == startOffset;
     });
 
