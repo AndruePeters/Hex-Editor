@@ -5,6 +5,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QtEndian>
+#include <QDateTime>
+#include <QTimeZone>
 #include <algorithm>
 
 HexController::HexController(HexModel* model)
@@ -105,19 +107,29 @@ void HexController::parseCurrentBuffer() {
             pkt.typeName = config.name;
 
             for (const PacketField& field : config.fields) {
-                if (field.byteOffset + 4 <= totalPacketLength) {
-                    if (field.dataType == "float32") {
-                        float val;
-                        memcpy(&val, data + offset + field.byteOffset, 4);
-                        pkt.properties[field.name] = QString::number(val);
-                    } else if (field.dataType == "uint32") {
-                        uint32_t val = qFromBigEndian<uint32_t>(data + offset + field.byteOffset);
-                        pkt.properties[field.name] = QString::number(val);
-                    } else {
-                        uint8_t rawByte = data[offset + field.byteOffset];
-                        uint8_t maskedVal = rawByte & field.bitMask;
-                        pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
-                    }
+                if (field.dataType == "float32" && field.byteOffset + 4 <= totalPacketLength) {
+                    float val;
+                    memcpy(&val, data + offset + field.byteOffset, 4);
+                    pkt.properties[field.name] = QString::number(val);
+                }
+                else if (field.dataType == "uint32" && field.byteOffset + 4 <= totalPacketLength) {
+                    uint32_t val = qFromBigEndian<uint32_t>(data + offset + field.byteOffset);
+                    pkt.properties[field.name] = QString::number(val);
+                }
+                else if (field.dataType == "epoch32" && field.byteOffset + 4 <= totalPacketLength) {
+                    uint32_t epoch = qFromBigEndian<uint32_t>(data + offset + field.byteOffset);
+                    QDateTime dt = QDateTime::fromSecsSinceEpoch(epoch, QTimeZone::UTC);
+                    pkt.properties[field.name] = dt.toString("yyyy-MM-dd HH:mm:ss UTC");
+                }
+                else if (field.dataType == "epoch64" && field.byteOffset + 8 <= totalPacketLength) {
+                    uint64_t epoch = qFromBigEndian<uint64_t>(data + offset + field.byteOffset);
+                    QDateTime dt = QDateTime::fromSecsSinceEpoch(epoch, QTimeZone::UTC);
+                    pkt.properties[field.name] = dt.toString("yyyy-MM-dd HH:mm:ss UTC");
+                }
+                else if (field.dataType == "enum" && field.byteOffset < totalPacketLength) {
+                    uint8_t rawByte = data[offset + field.byteOffset];
+                    uint8_t maskedVal = rawByte & field.bitMask;
+                    pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
                 }
             }
             // for (const PacketField& field : config.fields) {
@@ -131,26 +143,6 @@ void HexController::parseCurrentBuffer() {
         else if (type == 0x00000000) {
             pkt.typeName = "String Packet";
             pkt.properties["Decoded ASCII"] = QString::fromLatin1(data + offset + 6, payloadLength).replace('\0', "");
-        }
-        // else if (type == 0x00000001 && payloadLength == 12) {
-        //     pkt.typeName = "Sensor Array";
-        //     float x, y, z;
-        //     memcpy(&x, data + offset + 6, 4);
-        //     memcpy(&y, data + offset + 10, 4);
-        //     memcpy(&z, data + offset + 14, 4);
-        //     pkt.properties["X Axis"] = QString::number(x);
-        //     pkt.properties["Y Axis"] = QString::number(y);
-        //     pkt.properties["Z Axis"] = QString::number(z);
-        // }
-        else if (type == 0x00000002) {
-            pkt.typeName = "Timestamp";
-            if (payloadLength == 4) {
-                uint32_t epoch = qFromBigEndian<uint32_t>(data + offset + 6);
-                pkt.properties["Linux Epoch"] = QString::number(epoch);
-            } else if (payloadLength == 8) {
-                uint64_t epoch = qFromBigEndian<uint64_t>(data + offset + 6);
-                pkt.properties["Linux Epoch"] = QString::number(epoch);
-            }
         }
         else {
             pkt.typeName = QString("Unknown (Type 0x%1)").arg(type, 8, 16, QChar('0'));
@@ -267,11 +259,12 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
     if (m_packetConfigs.contains(type)) {
         for (const PacketField& field : m_packetConfigs[type].fields) {
             if (field.name == propertyName) {
-                // Flexible size check for 4-byte types (floats, 32-bit ints, etc.)
                 int fieldSize = 1;
                 QString dt = field.dataType.toLower();
-                if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32") {
+                if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32" || dt == "epoch32") {
                     fieldSize = 4;
+                } else if (dt.contains("64") || dt == "epoch64") {
+                    fieldSize = 8;
                 }
                 m_hexModel->setHighlightRange(startOffset + field.byteOffset, fieldSize);
                 return;
@@ -284,12 +277,7 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
         return;
     }
 
-    if (propertyName == "Decoded ASCII" || propertyName == "Linux Epoch") {
-        m_hexModel->setHighlightRange(startOffset + 6, length);
-        return;
-    }
-
-    auto it = std::ranges::find_if(m_packets, [&](const ParsedPacket& p) {
+    auto it = std::find_if(m_packets.begin(), m_packets.end(), [&](const ParsedPacket& p) {
         return p.startOffset == startOffset;
     });
 
@@ -353,6 +341,40 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
                                 replacement.append(currentByte);
                                 m_hexModel->replaceBytes(absoluteOffset, 1, replacement);
                             }
+                        }
+                    }
+                    else if (field.dataType == "epoch32") {
+                        bool ok = false;
+                        uint32_t uVal = newValue.toUInt(&ok);
+                        if (!ok) {
+                            QDateTime dt = QDateTime::fromString(newValue, "yyyy-MM-dd HH:mm:ss UTC");
+                            if (!dt.isValid()) dt = QDateTime::fromString(newValue, Qt::ISODate);
+                            if (dt.isValid()) {
+                                uVal = dt.toSecsSinceEpoch();
+                                ok = true;
+                            }
+                        }
+                        if (ok && absoluteOffset + 4 <= buffer.size()) {
+                            QByteArray replacement(4, 0);
+                            qToBigEndian<uint32_t>(uVal, replacement.data());
+                            m_hexModel->replaceBytes(absoluteOffset, 4, replacement);
+                        }
+                    }
+                    else if (field.dataType == "epoch64") {
+                        bool ok = false;
+                        uint64_t uVal = newValue.toULongLong(&ok);
+                        if (!ok) {
+                            QDateTime dt = QDateTime::fromString(newValue, "yyyy-MM-dd HH:mm:ss UTC");
+                            if (!dt.isValid()) dt = QDateTime::fromString(newValue, Qt::ISODate);
+                            if (dt.isValid()) {
+                                uVal = dt.toSecsSinceEpoch();
+                                ok = true;
+                            }
+                        }
+                        if (ok && absoluteOffset + 8 <= buffer.size()) {
+                            QByteArray replacement(8, 0);
+                            qToBigEndian<uint64_t>(uVal, replacement.data());
+                            m_hexModel->replaceBytes(absoluteOffset, 8, replacement);
                         }
                     }
                 }

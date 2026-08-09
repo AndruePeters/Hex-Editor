@@ -22,6 +22,17 @@
       ]
     },
     {
+      "matchType": 2,
+      "name": "Timestamp",
+      "fields": [
+        {
+          "name": "Linux Epoch",
+          "byteOffset": 6,
+          "dataType": "epoch32"
+        }
+      ]
+    },
+    {
       "matchType": 3,
       "name": "Device Configuration",
       "fields": [
