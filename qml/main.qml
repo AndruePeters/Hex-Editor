@@ -105,11 +105,26 @@ ApplicationWindow {
                 Layout.preferredWidth: 64
                 Layout.fillHeight: true
 
+                Rectangle {
+                    anchors.fill: parent
+                    color: "#1e1e1e"
+                    opacity: 0.8
+                }
+
                 Image {
                     id: minimapImage
                     anchors.fill: parent
                     source: "image://hexminimap/render"
                     fillMode: Image.Stretch
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: (mouse) => {
+                        let clickRatio = mouse.y / minimap.height;
+                        let targetY = (clickRatio * hexView.contentHeight) - (hexView.height / 2);
+                        hexView.contentY = Math.max(0, Math.min(targetY, hexView.contentHeight - hexView.height));
+                    }
                 }
 
                 Rectangle {
