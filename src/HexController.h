@@ -27,6 +27,7 @@ public:
     Q_INVOKABLE void updateStringPayload(int packetStartOffset, const QString& newText); 
     Q_INVOKABLE void selectOffset(int offset);
     Q_INVOKABLE void parseCurrentBuffer();
+    Q_INVOKABLE void updateSensorPayload(int packetStartOffset, float x, float y, float z);
 
 signals:
     void propertiesChanged();

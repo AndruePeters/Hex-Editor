@@ -139,6 +139,47 @@ m_packets.clear();
     m_hexModel->setErrorRanges(modelErrors);
 }
 
+void HexController::updateSensorPayload(int packetStartOffset, float x, float y, float z) {
+    if (packetStartOffset < 32) return;
+
+    auto it = std::find_if(m_packets.begin(), m_packets.end(), [&](const ParsedPacket& p) {
+        return p.startOffset == packetStartOffset;
+    });
+
+    if (it == m_packets.end() || it->typeName != "Sensor Array") return;
+
+    int oldTotalLength = it->totalLength;
+    int targetOffset = it->startOffset;
+
+    const QByteArray& buffer = m_hexModel->buffer();
+    uint32_t packetType = qFromBigEndian<uint32_t>(buffer.constData() + targetOffset);
+
+    // Construct new packet buffer (4b type + 2b length + 12b payload + 4b CRC)
+    QByteArray newPacketData;
+    newPacketData.resize(22);
+    char* data = newPacketData.data();
+
+    qToBigEndian<uint32_t>(packetType, data);
+    qToBigEndian<uint16_t>(12, data + 4);
+
+    // Write the 3 floats using native endianness (matches memcpy parsing)
+    memcpy(data + 6, &x, 4);
+    memcpy(data + 10, &y, 4);
+    memcpy(data + 14, &z, 4);
+
+    uint32_t crc = calculateCrc32(data, 18);
+    qToBigEndian<uint32_t>(crc, data + 18);
+
+    m_hexModel->replaceBytes(targetOffset, oldTotalLength, newPacketData);
+
+    QByteArray& updatedBuffer = m_hexModel->getBufferRef();
+    uint32_t fileCrc = calculateCrc32(updatedBuffer.constData(), updatedBuffer.size() - 4);
+    qToBigEndian<uint32_t>(fileCrc, updatedBuffer.data() + updatedBuffer.size() - 4);
+
+    parseCurrentBuffer();
+    selectOffset(targetOffset);
+}
+
 void HexController::selectOffset(int offset) {
     m_properties.clear();
     m_properties["Absolute Offset"] = QString::number(offset);

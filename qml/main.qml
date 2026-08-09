@@ -49,7 +49,6 @@ ApplicationWindow {
         anchors.fill: parent
         orientation: Qt.Horizontal
 
-        // Left Container: Hex View + Minimap
         RowLayout {
             SplitView.preferredWidth: 700
             SplitView.minimumWidth: 400
@@ -65,19 +64,19 @@ ApplicationWindow {
                 delegate: Rectangle {
                     implicitWidth: 32
                     implicitHeight: 24
-                    
+
                     color: {
-                        if (model.isEditCursor) return "#ffaa00" // Distinct orange for text cursor/selection
-                        if (model.isSelected) return "#3399ff"    // Blue for packet boundary selection
+                        if (model.isEditCursor) return "#ffaa00"
+                        if (model.isSelected) return "#3399ff"
                         if (model.isError) return "#ffcccc"
                         if (model.packetId !== -1) return (model.packetId % 2 === 0) ? "#2a2a2a" : "#353535"
                         return "transparent"
                     }
 
-                    Rectangle { anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: "#aaaaaa"; visible: model.edgeTop }
-                    Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: "#aaaaaa"; visible: model.edgeBottom }
-                    Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#aaaaaa"; visible: model.edgeLeft }
-                    Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#aaaaaa"; visible: model.edgeRight }
+                    Rectangle { anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: "#aaaaaa"; visible: model.edgeTop === true }
+                    Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: "#aaaaaa"; visible: model.edgeBottom === true }
+                    Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#aaaaaa"; visible: model.edgeLeft === true }
+                    Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#aaaaaa"; visible: model.edgeRight === true }
 
                     Text {
                         anchors.centerIn: parent
@@ -140,7 +139,6 @@ ApplicationWindow {
             }
         }
 
-        // Right Container: Properties View & Payload Editor
         SplitView {
             orientation: Qt.Vertical
             SplitView.fillWidth: true
@@ -152,12 +150,15 @@ ApplicationWindow {
                 Layout.margins: 10
                 clip: true
                 spacing: 8
-                
-                model: Object.keys(HexControllerInst.currentProperties).filter(k => k !== "HasError" && k !== "ErrorMessage" && k !== "Decoded ASCII" && k !== "PacketStartOffset")
+
+                model: Object.keys(HexControllerInst.currentProperties).filter(k =>
+                    k !== "HasError" && k !== "ErrorMessage" && k !== "Decoded ASCII" &&
+                    k !== "PacketStartOffset" && k !== "X Axis" && k !== "Y Axis" && k !== "Z Axis"
+                )
 
                 delegate: RowLayout {
                     width: ListView.view.width
-                    
+
                     Text {
                         text: modelData
                         font.bold: true
@@ -165,7 +166,7 @@ ApplicationWindow {
                         Layout.alignment: Qt.AlignTop
                         color: HexControllerInst.currentProperties["HasError"] ? "#cc0000" : palette.text
                     }
-                    
+
                     Text {
                         text: HexControllerInst.currentProperties[modelData]
                         Layout.fillWidth: true
@@ -176,18 +177,13 @@ ApplicationWindow {
                 }
             }
 
-            // Dedicated Multi-line Payload Editor
             ColumnLayout {
                 SplitView.fillHeight: true
                 SplitView.preferredHeight: 300
                 visible: HexControllerInst.currentProperties["Decoded ASCII"] !== undefined
                 spacing: 5
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: "#aaaaaa"
-                }
+                Rectangle { Layout.fillWidth: true; height: 1; color: "#aaaaaa" }
 
                 Text {
                     text: "String Payload Editor"
@@ -209,32 +205,31 @@ ApplicationWindow {
                         wrapMode: Text.WrapAnywhere
                         selectByMouse: true
                         font.family: "Monospace"
-                        
-                        function updateEditSelection() {
+
+                        function updateHighlight() {
                             let pktStart = HexControllerInst.currentProperties["PacketStartOffset"];
                             if (pktStart !== undefined) {
                                 let start = selectionStart;
                                 let end = selectionEnd;
-                                
+
                                 if (start === end) {
                                     start = Math.max(0, Math.min(cursorPosition, text.length - 1));
                                     if (text.length === 0) start = 0;
                                     end = start + 1;
                                 }
-                                
+
                                 HexModelInst.setEditSelection(pktStart + 6 + start, end - start);
                             }
                         }
 
-                        onCursorPositionChanged: updateEditSelection()
-                        onSelectionStartChanged: updateEditSelection()
-                        onSelectionEndChanged: updateEditSelection()
-                        
+                        onCursorPositionChanged: updateHighlight()
+                        onSelectedTextChanged: updateHighlight()
+
                         onActiveFocusChanged: {
                             if (!activeFocus) {
                                 HexModelInst.setEditSelection(-1, 0);
                             } else {
-                                updateEditSelection();
+                                updateHighlight();
                             }
                         }
                     }
@@ -247,6 +242,82 @@ ApplicationWindow {
                     Layout.topMargin: 0
                     onClicked: {
                         HexControllerInst.updateStringPayload(HexControllerInst.currentProperties["PacketStartOffset"], payloadArea.text);
+                        minimapImage.source = "image://hexminimap/render?" + Math.random();
+                        HexModelInst.setEditSelection(-1, 0);
+                    }
+                }
+            }
+
+            ColumnLayout {
+                SplitView.fillHeight: true
+                SplitView.preferredHeight: 200
+                visible: HexControllerInst.currentProperties["X Axis"] !== undefined
+                spacing: 5
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: "#aaaaaa" }
+
+                Text {
+                    text: "Sensor Array Editor"
+                    font.bold: true
+                    color: palette.text
+                    Layout.margins: 10
+                    Layout.bottomMargin: 0
+                }
+
+                GridLayout {
+                    columns: 2
+                    Layout.fillWidth: true
+                    Layout.margins: 10
+
+                    Text { text: "X Axis"; color: palette.text; font.bold: true }
+                    TextField {
+                        id: xAxisField
+                        Layout.fillWidth: true
+                        text: HexControllerInst.currentProperties["X Axis"] || ""
+                        validator: DoubleValidator {}
+                        onActiveFocusChanged: {
+                            if (activeFocus) HexModelInst.setEditSelection(HexControllerInst.currentProperties["PacketStartOffset"] + 6, 4);
+                            else HexModelInst.setEditSelection(-1, 0);
+                        }
+                    }
+
+                    Text { text: "Y Axis"; color: palette.text; font.bold: true }
+                    TextField {
+                        id: yAxisField
+                        Layout.fillWidth: true
+                        text: HexControllerInst.currentProperties["Y Axis"] || ""
+                        validator: DoubleValidator {}
+                        onActiveFocusChanged: {
+                            if (activeFocus) HexModelInst.setEditSelection(HexControllerInst.currentProperties["PacketStartOffset"] + 10, 4);
+                            else HexModelInst.setEditSelection(-1, 0);
+                        }
+                    }
+
+                    Text { text: "Z Axis"; color: palette.text; font.bold: true }
+                    TextField {
+                        id: zAxisField
+                        Layout.fillWidth: true
+                        text: HexControllerInst.currentProperties["Z Axis"] || ""
+                        validator: DoubleValidator {}
+                        onActiveFocusChanged: {
+                            if (activeFocus) HexModelInst.setEditSelection(HexControllerInst.currentProperties["PacketStartOffset"] + 14, 4);
+                            else HexModelInst.setEditSelection(-1, 0);
+                        }
+                    }
+                }
+
+                Button {
+                    text: "Apply Changes"
+                    Layout.alignment: Qt.AlignRight
+                    Layout.margins: 10
+                    Layout.topMargin: 0
+                    onClicked: {
+                        HexControllerInst.updateSensorPayload(
+                            HexControllerInst.currentProperties["PacketStartOffset"],
+                            parseFloat(xAxisField.text),
+                            parseFloat(yAxisField.text),
+                            parseFloat(zAxisField.text)
+                        );
                         minimapImage.source = "image://hexminimap/render?" + Math.random();
                         HexModelInst.setEditSelection(-1, 0);
                     }
