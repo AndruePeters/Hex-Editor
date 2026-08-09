@@ -14,17 +14,18 @@ struct ParsedPacket {
     QVariantMap properties;
 };
 
-struct EnumField {
+struct PacketField {
     QString name;
     int byteOffset;
-    uint8_t bitMask;
+    QString  dataType; // "enum", "float32", "uint32", etc
+    uint8_t bitMask = 0xFF;
     QMap<uint8_t, QString> valToStr;
     QMap<QString, uint8_t> strToVal;
 };
 
 struct PacketConfig {
     QString name;
-    QList<EnumField> fields;
+    QList<PacketField> fields;
 };
 
 class HexController : public QObject {
@@ -43,6 +44,7 @@ public:
     Q_INVOKABLE void selectOffset(int offset);
     Q_INVOKABLE void selectPropertyBytes(const QString& propertyName);
     Q_INVOKABLE void applyStagedChanges(int packetStartOffset, const QVariantMap& changes);
+    Q_INVOKABLE bool isConfigEditable(const QString& propertyName) const;
 
     signals:
         void propertiesChanged();

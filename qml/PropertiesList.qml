@@ -61,22 +61,50 @@ ColumnLayout {
 
             Loader {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 35
                 Layout.alignment: Qt.AlignVCenter
 
-                sourceComponent: HexControllerInst.propertyOptions[modelData] !== undefined ? enumDelegate : textDelegate
+                sourceComponent: {
+                    let opts = HexControllerInst.propertyOptions[modelData];
+                    return (opts !== undefined && opts.length > 0) ? enumDelegate : textDelegate;
+                }
 
                 Component {
                     id: textDelegate
-                    Text {
-                        text: HexControllerInst.currentProperties[modelData]
-                        wrapMode: Text.WrapAnywhere
+                    TextField {
+                        anchors.fill: parent
+                        text: stagedChanges[modelData] !== undefined ?
+                            stagedChanges[modelData] :
+                            HexControllerInst.currentProperties[modelData]
+
+                        readOnly: {
+                            let systemKeys = ["Hex Address", "Absolute Offset", "Struct", "CRC", "Calculated CRC"];
+                            if (systemKeys.includes(modelData)) return true;
+                            return !HexControllerInst.isConfigEditable(modelData);
+                        }
+
                         color: HexControllerInst.currentProperties["HasError"] ? "#cc0000" : palette.text
+
+                        background: Rectangle {
+                            color: parent.readOnly ? "transparent" : palette.base
+                            border.color: parent.readOnly ? "transparent" : palette.mid
+                        }
+
+                        onTextEdited: {
+                            if (!readOnly) {
+                                let tmp = stagedChanges;
+                                tmp[modelData] = text;
+                                stagedChanges = Object.assign({}, tmp);
+                                HexControllerInst.selectPropertyBytes(modelData);
+                            }
+                        }
                     }
                 }
 
                 Component {
                     id: enumDelegate
                     ComboBox {
+                        anchors.fill: parent
                         model: HexControllerInst.propertyOptions[modelData] || []
 
                         currentIndex: find(stagedChanges[modelData] !== undefined ?

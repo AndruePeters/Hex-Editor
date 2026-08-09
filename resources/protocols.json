@@ -1,6 +1,27 @@
 {
   "packets": [
     {
+      "matchType": 1,
+      "name": "Sensor Array",
+      "fields": [
+        {
+          "name": "X Axis",
+          "byteOffset": 6,
+          "dataType": "float32"
+        },
+        {
+          "name": "Y Axis",
+          "byteOffset": 10,
+          "dataType": "float32"
+        },
+        {
+          "name": "Z Axis",
+          "byteOffset": 14,
+          "dataType": "float32"
+        }
+      ]
+    },
+    {
       "matchType": 3,
       "name": "Device Configuration",
       "fields": [

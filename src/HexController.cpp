@@ -46,18 +46,23 @@ void HexController::loadConfiguration(const QString& configPath) {
         QJsonArray fields = pktObj["fields"].toArray();
         for (const QJsonValue& fVal : fields) {
             QJsonObject fieldObj = fVal.toObject();
-            EnumField field;
+            PacketField field;
             field.name = fieldObj["name"].toString();
             field.byteOffset = fieldObj["byteOffset"].toInt();
-            field.bitMask = fieldObj["bitMask"].toInt();
+            field.dataType = fieldObj["dataType"].toString("enum");
+            // field.bitMask = fieldObj["bitMask"].toInt();
 
-            QJsonObject enums = fieldObj["enums"].toObject();
-            for (auto it = enums.begin(); it != enums.end(); ++it) {
-                uint8_t intVal = it.key().toUInt();
-                QString strVal = it.value().toString();
-                field.valToStr[intVal] = strVal;
-                field.strToVal[strVal] = intVal;
+            if (field.dataType == "enum") {
+                field.bitMask = fieldObj["bitMask"].toInt(0xFF);
+                QJsonObject enums = fieldObj["enums"].toObject();
+                for (auto it = enums.begin(); it != enums.end(); ++it) {
+                    uint8_t intVal = it.key().toUInt();
+                    QString strVal = it.value().toString();
+                    field.valToStr[intVal] = strVal;
+                    field.strToVal[strVal] = intVal;
+                }
             }
+
             config.fields.append(field);
         }
         m_packetConfigs[type] = config;
@@ -99,28 +104,44 @@ void HexController::parseCurrentBuffer() {
             const PacketConfig& config = m_packetConfigs[type];
             pkt.typeName = config.name;
 
-            for (const EnumField& field : config.fields) {
-                if (field.byteOffset < totalPacketLength) {
-                    uint8_t rawByte = data[offset + field.byteOffset];
-                    uint8_t maskedVal = rawByte & field.bitMask;
-                    pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
+            for (const PacketField& field : config.fields) {
+                if (field.byteOffset + 4 <= totalPacketLength) {
+                    if (field.dataType == "float32") {
+                        float val;
+                        memcpy(&val, data + offset + field.byteOffset, 4);
+                        pkt.properties[field.name] = QString::number(val);
+                    } else if (field.dataType == "uint32") {
+                        uint32_t val = qFromBigEndian<uint32_t>(data + offset + field.byteOffset);
+                        pkt.properties[field.name] = QString::number(val);
+                    } else {
+                        uint8_t rawByte = data[offset + field.byteOffset];
+                        uint8_t maskedVal = rawByte & field.bitMask;
+                        pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
+                    }
                 }
             }
+            // for (const PacketField& field : config.fields) {
+            //     if (field.byteOffset < totalPacketLength) {
+            //         uint8_t rawByte = data[offset + field.byteOffset];
+            //         uint8_t maskedVal = rawByte & field.bitMask;
+            //         pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
+            //     }
+            // }
         }
         else if (type == 0x00000000) {
             pkt.typeName = "String Packet";
             pkt.properties["Decoded ASCII"] = QString::fromLatin1(data + offset + 6, payloadLength).replace('\0', "");
         }
-        else if (type == 0x00000001 && payloadLength == 12) {
-            pkt.typeName = "Sensor Array";
-            float x, y, z;
-            memcpy(&x, data + offset + 6, 4);
-            memcpy(&y, data + offset + 10, 4);
-            memcpy(&z, data + offset + 14, 4);
-            pkt.properties["X Axis"] = QString::number(x);
-            pkt.properties["Y Axis"] = QString::number(y);
-            pkt.properties["Z Axis"] = QString::number(z);
-        }
+        // else if (type == 0x00000001 && payloadLength == 12) {
+        //     pkt.typeName = "Sensor Array";
+        //     float x, y, z;
+        //     memcpy(&x, data + offset + 6, 4);
+        //     memcpy(&y, data + offset + 10, 4);
+        //     memcpy(&z, data + offset + 14, 4);
+        //     pkt.properties["X Axis"] = QString::number(x);
+        //     pkt.properties["Y Axis"] = QString::number(y);
+        //     pkt.properties["Z Axis"] = QString::number(z);
+        // }
         else if (type == 0x00000002) {
             pkt.typeName = "Timestamp";
             if (payloadLength == 4) {
@@ -198,12 +219,17 @@ void HexController::selectOffset(int offset) {
             if (pkt.startOffset + 4 <= buffer.size()) {
                 uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + pkt.startOffset);
                 if (m_packetConfigs.contains(type)) {
-                    for (const EnumField& field : m_packetConfigs[type].fields) {
-                        QVariantList safeOptions;
-                        for (const QString& key : field.strToVal.keys()) {
-                            safeOptions.append(key);
+                    for (const PacketField& field : m_packetConfigs[type].fields) {
+                        if (field.dataType == "enum") {
+                            QVariantList safeOptions;
+                            for (const QString& key : field.strToVal.keys()) {
+                                safeOptions.append(key);
+                            }
+                            m_options[field.name] = safeOptions;
+                        } else {
+                            // Register key with empty options so Loader recognizes it as a valid config field
+                            m_options[field.name] = QVariantList();
                         }
-                        m_options[field.name] = safeOptions;
                     }
                 }
             }
@@ -239,9 +265,15 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
     uint16_t length = (startOffset + 6 <= buffer.size()) ? qFromBigEndian<uint16_t>(buffer.constData() + startOffset + 4) : 0;
 
     if (m_packetConfigs.contains(type)) {
-        for (const EnumField& field : m_packetConfigs[type].fields) {
+        for (const PacketField& field : m_packetConfigs[type].fields) {
             if (field.name == propertyName) {
-                m_hexModel->setHighlightRange(startOffset + field.byteOffset, 1);
+                // Flexible size check for 4-byte types (floats, 32-bit ints, etc.)
+                int fieldSize = 1;
+                QString dt = field.dataType.toLower();
+                if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32") {
+                    fieldSize = 4;
+                }
+                m_hexModel->setHighlightRange(startOffset + field.byteOffset, fieldSize);
                 return;
             }
         }
@@ -256,10 +288,6 @@ void HexController::selectPropertyBytes(const QString& propertyName) {
         m_hexModel->setHighlightRange(startOffset + 6, length);
         return;
     }
-
-    if (propertyName == "X Axis") { m_hexModel->setHighlightRange(startOffset + 6, 4); return; }
-    if (propertyName == "Y Axis") { m_hexModel->setHighlightRange(startOffset + 10, 4); return; }
-    if (propertyName == "Z Axis") { m_hexModel->setHighlightRange(startOffset + 14, 4); return; }
 
     auto it = std::find_if(m_packets.begin(), m_packets.end(), [&](const ParsedPacket& p) {
         return p.startOffset == startOffset;
@@ -279,13 +307,10 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
 
     if (it == m_packets.end()) return;
 
-    int oldTotalLength = it->totalLength;
     const QByteArray& buffer = m_hexModel->buffer();
     if (packetStartOffset + 4 > buffer.size()) return;
 
     uint32_t packetType = qFromBigEndian<uint32_t>(buffer.constData() + packetStartOffset);
-    bool sizeChanged = false;
-    QByteArray newPacketData;
 
     if (m_packetConfigs.contains(packetType)) {
         const PacketConfig& config = m_packetConfigs[packetType];
@@ -294,19 +319,41 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
             QString fieldName = itMap.key();
             QString newValue = itMap.value().toString();
 
-            for (const EnumField& field : config.fields) {
-                if (field.name == fieldName && field.strToVal.contains(newValue)) {
-                    uint8_t newBits = field.strToVal[newValue];
+            for (const PacketField& field : config.fields) {
+                if (field.name == fieldName) {
                     int absoluteOffset = packetStartOffset + field.byteOffset;
 
-                    if (absoluteOffset < buffer.size()) {
-                        uint8_t currentByte = buffer.at(absoluteOffset);
-                        currentByte &= ~field.bitMask;
-                        currentByte |= (newBits & field.bitMask);
+                    if (field.dataType == "float32") {
+                        bool ok = false;
+                        float fVal = newValue.toFloat(&ok);
+                        if (ok && absoluteOffset + 4 <= buffer.size()) {
+                            QByteArray replacement(4, 0);
+                            memcpy(replacement.data(), &fVal, 4);
+                            m_hexModel->replaceBytes(absoluteOffset, 4, replacement);
+                        }
+                    }
+                    else if (field.dataType == "uint32") {
+                        bool ok = false;
+                        uint32_t uVal = newValue.toUInt(&ok);
+                        if (ok && absoluteOffset + 4 <= buffer.size()) {
+                            QByteArray replacement(4, 0);
+                            qToBigEndian<uint32_t>(uVal, replacement.data());
+                            m_hexModel->replaceBytes(absoluteOffset, 4, replacement);
+                        }
+                    }
+                    else if (field.dataType == "enum") {
+                        if (field.strToVal.contains(newValue)) {
+                            uint8_t newBits = field.strToVal[newValue];
+                            if (absoluteOffset < buffer.size()) {
+                                uint8_t currentByte = buffer.at(absoluteOffset);
+                                currentByte &= ~field.bitMask;
+                                currentByte |= (newBits & field.bitMask);
 
-                        QByteArray replacement;
-                        replacement.append(currentByte);
-                        m_hexModel->replaceBytes(absoluteOffset, 1, replacement);
+                                QByteArray replacement;
+                                replacement.append(currentByte);
+                                m_hexModel->replaceBytes(absoluteOffset, 1, replacement);
+                            }
+                        }
                     }
                 }
             }
@@ -316,53 +363,53 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
         QString newText = changes["Decoded ASCII"].toString();
         QByteArray newPayload = newText.toLatin1();
         if (newPayload.size() <= 65535) {
+            QByteArray newPacketData;
             newPacketData.resize(10 + newPayload.size());
             char* data = newPacketData.data();
             qToBigEndian<uint32_t>(packetType, data);
             qToBigEndian<uint16_t>(newPayload.size(), data + 4);
             memcpy(data + 6, newPayload.constData(), newPayload.size());
-            sizeChanged = true;
-        }
-    }
-    else if (packetType == 0x00000001) {
-        float x = changes.value("X Axis", it->properties["X Axis"]).toFloat();
-        float y = changes.value("Y Axis", it->properties["Y Axis"]).toFloat();
-        float z = changes.value("Z Axis", it->properties["Z Axis"]).toFloat();
 
-        newPacketData.resize(22);
-        char* data = newPacketData.data();
-        qToBigEndian<uint32_t>(packetType, data);
-        qToBigEndian<uint16_t>(12, data + 4);
-        memcpy(data + 6, &x, 4);
-        memcpy(data + 10, &y, 4);
-        memcpy(data + 14, &z, 4);
-        sizeChanged = true;
-    }
-
-    if (sizeChanged) {
-        uint32_t crc = calculateCrc32(newPacketData.constData(), newPacketData.size() - 4);
-        qToBigEndian<uint32_t>(crc, newPacketData.data() + newPacketData.size() - 4);
-        m_hexModel->replaceBytes(packetStartOffset, oldTotalLength, newPacketData);
-    } else {
-        uint16_t pktLen = qFromBigEndian<uint16_t>(m_hexModel->buffer().constData() + packetStartOffset + 4);
-        if (packetStartOffset + 6 + pktLen + 4 <= m_hexModel->buffer().size()) {
-            uint32_t crc = calculateCrc32(m_hexModel->buffer().constData() + packetStartOffset, 6 + pktLen);
-            QByteArray crcBytes(4, 0);
-            qToBigEndian<uint32_t>(crc, crcBytes.data());
-            m_hexModel->replaceBytes(packetStartOffset + 6 + pktLen, 4, crcBytes);
+            uint32_t crc = calculateCrc32(newPacketData.constData(), newPacketData.size() - 4);
+            qToBigEndian<uint32_t>(crc, newPacketData.data() + newPacketData.size() - 4);
+            m_hexModel->replaceBytes(packetStartOffset, it->totalLength, newPacketData);
         }
     }
 
+    // Recalculate packet-level CRC
+    uint16_t pktLen = qFromBigEndian<uint16_t>(m_hexModel->buffer().constData() + packetStartOffset + 4);
+    if (packetStartOffset + 6 + pktLen + 4 <= m_hexModel->buffer().size()) {
+        uint32_t crc = calculateCrc32(m_hexModel->buffer().constData() + packetStartOffset, 6 + pktLen);
+        QByteArray crcBytes(4, 0);
+        qToBigEndian<uint32_t>(crc, crcBytes.data());
+        m_hexModel->replaceBytes(packetStartOffset + 6 + pktLen, 4, crcBytes);
+    }
+
+    // Recalculate global file CRC at the very end of the buffer
     const QByteArray& updatedBuffer = m_hexModel->buffer();
     if (updatedBuffer.size() >= 4) {
         uint32_t fileCrc = calculateCrc32(updatedBuffer.constData(), updatedBuffer.size() - 4);
         QByteArray crcBytes(4, 0);
         qToBigEndian<uint32_t>(fileCrc, crcBytes.data());
-
-        // Use replaceBytes to ensure QML receives the dataChanged signal
         m_hexModel->replaceBytes(updatedBuffer.size() - 4, 4, crcBytes);
     }
 
     parseCurrentBuffer();
     selectOffset(packetStartOffset);
+}
+
+bool HexController::isConfigEditable(const QString &propertyName) const {
+    if (!m_properties.contains("PacketStartOffset")) return false;
+    int startOffset = m_properties["PacketStartOffset"].toInt();
+
+    const QByteArray& buffer = m_hexModel->buffer();
+    if (startOffset + 4 > buffer.size()) return false;
+
+    uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + startOffset);
+    if (m_packetConfigs.contains(type)) {
+        for (const PacketField& field : m_packetConfigs[type].fields) {
+            if (field.name == propertyName) return true;
+        }
+    }
+    return false;
 }

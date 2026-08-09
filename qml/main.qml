@@ -84,11 +84,11 @@ ApplicationWindow {
                 onChangesApplied: minimap.refresh()
             }
 
-            SensorArrayEditor {
-                SplitView.fillHeight: true
-                SplitView.preferredHeight: 200
-                onChangesApplied: minimap.refresh()
-            }
+            // SensorArrayEditor {
+            //     SplitView.fillHeight: true
+            //     SplitView.preferredHeight: 200
+            //     onChangesApplied: minimap.refresh()
+            // }
         }
     }
 }
