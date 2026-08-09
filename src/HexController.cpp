@@ -9,6 +9,16 @@
 #include <QTimeZone>
 #include <algorithm>
 
+int getBitShift(uint32_t mask) {
+    if (mask == 0) return 0;
+    int shift = 0;
+    while ((mask & 1) == 0) {
+        mask >>= 1;
+        shift++;
+    }
+    return shift;
+}
+
 HexController::HexController(HexModel* model)
     : QObject(nullptr), m_hexModel(model)
 {
@@ -52,10 +62,19 @@ void HexController::loadConfiguration(const QString& configPath) {
             field.name = fieldObj["name"].toString();
             field.byteOffset = fieldObj["byteOffset"].toInt();
             field.dataType = fieldObj["dataType"].toString("enum");
-            // field.bitMask = fieldObj["bitMask"].toInt();
 
             if (field.dataType == "enum") {
-                field.bitMask = fieldObj["bitMask"].toInt(0xFF);
+
+                if (fieldObj.contains("bitMask")) {
+                    QJsonValue maskVal = fieldObj["bitMask"];
+                    if (maskVal.isString()) {
+                        field.bitMask = maskVal.toString().toUInt(nullptr, 0);
+                    } else {
+                        field.bitMask = maskVal.toInt();
+                    }
+                } else {
+                    field.bitMask = 0xFF; // Default full byte mask
+                }
                 QJsonObject enums = fieldObj["enums"].toObject();
                 for (auto it = enums.begin(); it != enums.end(); ++it) {
                     uint8_t intVal = it.key().toUInt();
@@ -128,7 +147,9 @@ void HexController::parseCurrentBuffer() {
                 }
                 else if (field.dataType == "enum" && field.byteOffset < totalPacketLength) {
                     uint8_t rawByte = data[offset + field.byteOffset];
-                    uint8_t maskedVal = rawByte & field.bitMask;
+                    uint32_t mask = field.bitMask;
+                    int shift = getBitShift(mask);
+                    uint32_t maskedVal = (rawByte & mask) >> shift;
                     pkt.properties[field.name] = field.valToStr.value(maskedVal, "UNKNOWN");
                 }
                 else if (field.dataType == "string") {
@@ -392,11 +413,15 @@ void HexController::applyStagedChanges(int packetStartOffset, const QVariantMap&
                     }
                     else if (field.dataType == "enum") {
                         if (field.strToVal.contains(newValue)) {
-                            uint8_t newBits = field.strToVal[newValue];
+                            uint32_t rawVal = field.strToVal[newValue];
+                            uint32_t mask = field.bitMask;
+                            int shift = getBitShift(mask);
+                            uint32_t shiftedVal = rawVal << shift;
+
                             if (absoluteOffset < buffer.size()) {
                                 uint8_t currentByte = buffer.at(absoluteOffset);
-                                currentByte &= ~field.bitMask;
-                                currentByte |= (newBits & field.bitMask);
+                                currentByte &= ~mask;                           // Clear only the bits for this field
+                                currentByte |= (shiftedVal & mask);             // Merge the new shifted value
 
                                 QByteArray replacement;
                                 replacement.append(currentByte);

@@ -50,7 +50,7 @@
         {
           "name": "Power State",
           "byteOffset": 6,
-          "bitMask": 255,
+          "bitMask": "0xFF",
           "enums": {
             "0": "Off",
             "1": "On",
@@ -61,11 +61,21 @@
         {
           "name": "Antenna Mode",
           "byteOffset": 7,
-          "bitMask": 15,
+          "bitMask": "0x0F",
           "enums": {
             "0": "Internal",
             "1": "External_TX",
             "2": "External_RX"
+          }
+        },
+        {
+          "name": "Gain Setting",
+          "byteOffset": 7,
+          "bitMask": "0xF0",
+          "enums": {
+            "0": "Low",
+            "1": "Medium",
+            "2": "High"
           }
         }
       ]
