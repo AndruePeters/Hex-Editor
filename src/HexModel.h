@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QVector>
 #include <QString>
+#include <QHash>
 
 class HexModel : public QAbstractListModel {
     Q_OBJECT
@@ -16,7 +17,8 @@ public:
     enum HexRoles {
         HexRole = Qt::UserRole + 1,
         AsciiRole,
-        IsErrorRole
+        IsErrorRole,
+        SectionColorRole
     };
 
     explicit HexModel(QObject* parent = nullptr);
@@ -27,7 +29,6 @@ public:
 
     int size() const { return m_buffer.size(); }
     const QByteArray& buffer() const { return m_buffer; }
-    // QByteArray& getBufferRef() { return m_buffer; }
 
     int selectionOffset() const { return m_selectionOffset; }
     int selectionLength() const { return m_selectionLength; }
@@ -43,6 +44,9 @@ public:
     void clearErrorBytes();
     void addErrorRange(int offset, int length);
 
+    void setSectionColors(const QHash<int, QString>& colorMap);
+    void clearSectionColors();
+
     Q_INVOKABLE void loadFile(const QString& filePath);
     Q_INVOKABLE void saveFile(const QString& filePath);
     Q_INVOKABLE QString getHexByte(int index) const;
@@ -57,6 +61,7 @@ signals:
 private:
     QByteArray m_buffer;
     QVector<bool> m_errorMap;
+    QHash<int, QString> m_sectionColors;
     int m_selectionOffset = -1;
     int m_selectionLength = 0;
     int m_highlightOffset = -1;

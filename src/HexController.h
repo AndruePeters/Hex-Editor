@@ -50,6 +50,8 @@ public:
     Q_INVOKABLE bool isStringField(const QString& propertyName) const;
     Q_INVOKABLE void selectStringRange(int startCharIndex, int endCharIndex);
 
+    void updatePacketStructuralColors(int packetStartOffset);
+
     signals:
         void propertiesChanged();
 
@@ -62,4 +64,5 @@ private:
 
     QVariantMap m_properties;
     QVariantMap m_options;
+    QHash<int, QString> m_baseColorMap;
 };

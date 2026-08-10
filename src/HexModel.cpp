@@ -24,6 +24,8 @@ QVariant HexModel::data(const QModelIndex& index, int role) const {
             return getAsciiChar(row);
         case IsErrorRole:
             return isErrorByte(row);
+        case SectionColorRole:
+            return m_sectionColors.value(row, "transparent");
         default:
             return QVariant();
     }
@@ -34,7 +36,24 @@ QHash<int, QByteArray> HexModel::roleNames() const {
     roles[HexRole] = "hex";
     roles[AsciiRole] = "ascii";
     roles[IsErrorRole] = "isError";
+    roles[SectionColorRole] = "sectionColor";
     return roles;
+}
+
+void HexModel::setSectionColors(const QHash<int, QString>& colorMap) {
+    m_sectionColors = colorMap;
+    if (!m_buffer.isEmpty()) {
+        emit dataChanged(index(0, 0), index(m_buffer.size() - 1, 0), {SectionColorRole});
+    }
+}
+
+void HexModel::clearSectionColors() {
+    if (!m_sectionColors.isEmpty()) {
+        m_sectionColors.clear();
+        if (!m_buffer.isEmpty()) {
+            emit dataChanged(index(0, 0), index(m_buffer.size() - 1, 0), {SectionColorRole});
+        }
+    }
 }
 
 void HexModel::loadFile(const QString& filePath) {
@@ -49,6 +68,7 @@ void HexModel::loadFile(const QString& filePath) {
         m_buffer = file.readAll();
         m_errorMap.resize(m_buffer.size());
         m_errorMap.fill(false);
+        m_sectionColors.clear();
         endResetModel();
 
         emit bufferChanged();
@@ -98,7 +118,7 @@ void HexModel::replaceBytes(int offset, int length, const QByteArray& newBytes) 
     m_buffer.replace(offset, length, newBytes);
     m_errorMap.resize(m_buffer.size());
 
-    emit dataChanged(createIndex(offset, 0), createIndex(offset + length - 1, 0));
+    emit dataChanged(index(offset, 0), index(offset + length - 1, 0));
     emit bufferChanged();
 }
 
@@ -112,7 +132,7 @@ bool HexModel::isErrorByte(int index) const {
 void HexModel::clearErrorBytes() {
     m_errorMap.fill(false, m_buffer.size());
     if (m_buffer.size() > 0) {
-        emit dataChanged(createIndex(0, 0), createIndex(m_buffer.size() - 1, 0), {IsErrorRole});
+        emit dataChanged(index(0, 0), index(m_buffer.size() - 1, 0), {IsErrorRole});
     }
 }
 
@@ -123,7 +143,7 @@ void HexModel::addErrorRange(int offset, int length) {
     for (int i = offset; i < offset + length && i < m_errorMap.size(); ++i) {
         m_errorMap[i] = true;
     }
-    emit dataChanged(createIndex(offset, 0), createIndex(offset + length - 1, 0), {IsErrorRole});
+    emit dataChanged(index(offset, 0), index(offset + length - 1, 0), {IsErrorRole});
 }
 
 void HexModel::setEditSelection(int offset, int length) {

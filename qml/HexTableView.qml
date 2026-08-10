@@ -52,8 +52,12 @@ RowLayout {
 
             color: {
                 if (isHighlighted) return "yellow"
-                if (isPrimarySelected) return "#0078D7"
-                return "transparent"
+                if (isPrimarySelected) {
+                    return model.sectionColor !== undefined && model.sectionColor !== "transparent"
+                        ? Qt.lighter(model.sectionColor, 2.0) // Modifies base struct color to show selection
+                        : "#0078D7"
+                }
+                return model.sectionColor !== undefined ? model.sectionColor : "transparent"
             }
 
             Text {

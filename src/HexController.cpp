@@ -90,10 +90,13 @@ void HexController::loadConfiguration(const QString& configPath) {
     }
 }
 
+
 void HexController::parseCurrentBuffer() {
     if (!m_hexModel) return;
 
     m_packets.clear();
+    m_baseColorMap.clear();
+
     const QByteArray& buffer = m_hexModel->buffer();
     const char* data = buffer.constData();
     int size = buffer.size();
@@ -108,7 +111,12 @@ void HexController::parseCurrentBuffer() {
     headerPkt.typeName = "File Header";
     m_packets.append(headerPkt);
 
+    for (int i = 0; i < 32; ++i) {
+        m_baseColorMap.insert(i, "#455A64"); // Dark boundary for header
+    }
+
     int offset = 32;
+    bool alternatePacketColor = false;
 
     while (offset + 10 <= size - 4) {
         uint32_t type = qFromBigEndian<uint32_t>(data + offset);
@@ -120,6 +128,16 @@ void HexController::parseCurrentBuffer() {
         ParsedPacket pkt;
         pkt.startOffset = offset;
         pkt.totalLength = totalPacketLength;
+
+        // Alternate packet background colors for visual differentiation
+        QString basePktColor = alternatePacketColor ? "#424242" : "#212121";
+        alternatePacketColor = !alternatePacketColor;
+
+        for (int i = 0; i < totalPacketLength; ++i) {
+            if (offset + i < size) {
+                m_baseColorMap.insert(offset + i, basePktColor);
+            }
+        }
 
         if (m_packetConfigs.contains(type)) {
             const PacketConfig& config = m_packetConfigs[type];
@@ -159,8 +177,7 @@ void HexController::parseCurrentBuffer() {
                     }
                 }
             }
-        }
-        else {
+        } else {
             pkt.typeName = QString("Unknown (Type 0x%1)").arg(type, 8, 16, QChar('0'));
         }
 
@@ -186,6 +203,10 @@ void HexController::parseCurrentBuffer() {
         crcPkt.totalLength = size - offset;
         crcPkt.typeName = "File CRC";
 
+        for (int i = offset; i < size; ++i) {
+            m_baseColorMap.insert(i, "#151515");
+        }
+
         if (crcPkt.totalLength == 4) {
             uint32_t fileCrc = qFromBigEndian<uint32_t>(data + offset);
             uint32_t calcFileCrc = calculateCrc32(data, offset);
@@ -199,9 +220,11 @@ void HexController::parseCurrentBuffer() {
                 m_hexModel->addErrorRange(crcPkt.startOffset, crcPkt.totalLength);
             }
         }
-
         m_packets.append(crcPkt);
     }
+
+    // Apply the unselected packet grid colors
+    m_hexModel->setSectionColors(m_baseColorMap);
 }
 
 void HexController::selectOffset(int offset) {
@@ -213,7 +236,10 @@ void HexController::selectOffset(int offset) {
     m_properties["Absolute Offset"] = QString::number(offset);
     m_properties["Hex Address"] = QString("0x%1").arg(offset, 8, 16, QChar('0')).toUpper();
 
+    // Start with the base grid map
+    QHash<int, QString> activeColorMap = m_baseColorMap;
     bool found = false;
+
     for (const auto& pkt : m_packets) {
         if (offset >= pkt.startOffset && offset < (pkt.startOffset + pkt.totalLength)) {
             m_properties["Struct"] = pkt.typeName;
@@ -226,7 +252,41 @@ void HexController::selectOffset(int offset) {
             const QByteArray& buffer = m_hexModel->buffer();
             if (pkt.startOffset + 4 <= buffer.size()) {
                 uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + pkt.startOffset);
+                uint16_t payloadLength = (pkt.startOffset + 6 <= buffer.size()) ? qFromBigEndian<uint16_t>(buffer.constData() + pkt.startOffset + 4) : 0;
+
                 if (m_packetConfigs.contains(type)) {
+                    const QStringList colors = {"#1A4A76", "#256296", "#307BB5", "#4793C4", "#61ABD1"};
+                    int colorIdx = 0;
+
+                    // Overlay field structure colors exclusively for the selected packet
+                    for (const PacketField& field : m_packetConfigs[type].fields) {
+                        int fieldSize = 1;
+                        QString dt = field.dataType.toLower();
+                        if (dt == "string") {
+                            fieldSize = payloadLength - (field.byteOffset - 6);
+                            if (fieldSize < 1) fieldSize = 1;
+                        } else if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32" || dt == "epoch32") {
+                            fieldSize = 4;
+                        } else if (dt.contains("64") || dt == "epoch64") {
+                            fieldSize = 8;
+                        }
+
+                        QString color = colors[colorIdx % colors.size()];
+                        for (int i = 0; i < fieldSize; ++i) {
+                            if (pkt.startOffset + field.byteOffset + i < buffer.size()) {
+                                activeColorMap.insert(pkt.startOffset + field.byteOffset + i, color);
+                            }
+                        }
+                        colorIdx++;
+                    }
+
+                    // Overlay CRC distinct color for the selected packet
+                    for (int i = 0; i < 4; ++i) {
+                        if (pkt.startOffset + 6 + payloadLength + i < buffer.size()) {
+                            activeColorMap.insert(pkt.startOffset + 6 + payloadLength + i, "#3A1A1A");
+                        }
+                    }
+
                     for (const PacketField& field : m_packetConfigs[type].fields) {
                         if (field.dataType == "enum") {
                             QVariantList safeOptions;
@@ -235,7 +295,6 @@ void HexController::selectOffset(int offset) {
                             }
                             m_options[field.name] = safeOptions;
                         } else {
-                            // Register key with empty options so Loader recognizes it as a valid config field
                             m_options[field.name] = QVariantList();
                         }
                     }
@@ -247,6 +306,9 @@ void HexController::selectOffset(int offset) {
             break;
         }
     }
+
+    // Apply the updated map containing the base grid and the active packet overlay
+    m_hexModel->setSectionColors(activeColorMap);
 
     if (!found) {
         m_properties["Struct"] = "Unmapped Data";
@@ -542,3 +604,47 @@ void HexController::selectStringRange(int startCharIndex, int endCharIndex) {
         }
     }
 }
+
+void HexController::updatePacketStructuralColors(int packetStartOffset) {
+    if (!m_hexModel) return;
+
+    QHash<int, QString> colorMap;
+    const QByteArray& buffer = m_hexModel->buffer();
+    if (packetStartOffset + 4 > buffer.size()) {
+        m_hexModel->clearSectionColors();
+        return;
+    }
+
+    uint32_t type = qFromBigEndian<uint32_t>(buffer.constData() + packetStartOffset);
+    uint16_t payloadLength = (packetStartOffset + 6 <= buffer.size()) ? qFromBigEndian<uint16_t>(buffer.constData() + packetStartOffset + 4) : 0;
+
+    if (m_packetConfigs.contains(type)) {
+        const PacketConfig& config = m_packetConfigs[type];
+
+        // Define a distinct structure palette (semi-transparent or dark-theme compatible)
+        const QStringList paletteColors = {"#1A3644", "#204659", "#26576E", "#2C6784", "#327899"};
+        int colorIdx = 0;
+
+        for (const PacketField& field : config.fields) {
+            int fieldSize = 1;
+            QString dt = field.dataType.toLower();
+            if (dt == "string") {
+                fieldSize = payloadLength - (field.byteOffset - 6);
+                if (fieldSize < 0) fieldSize = 1;
+            } else if (dt.contains("float") || dt.contains("32") || dt == "uint32" || dt == "int32" || dt == "epoch32") {
+                fieldSize = 4;
+            } else if (dt.contains("64") || dt == "epoch64") {
+                fieldSize = 8;
+            }
+
+            QString assignedColor = paletteColors[colorIdx % paletteColors.size()];
+            for (int i = 0; i < fieldSize; ++i) {
+                colorMap.insert(packetStartOffset + field.byteOffset + i, assignedColor);
+            }
+            colorIdx++;
+        }
+    }
+
+    m_hexModel->setSectionColors(colorMap);
+}
+
